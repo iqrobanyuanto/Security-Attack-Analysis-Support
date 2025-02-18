@@ -2,8 +2,9 @@ import os
 from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer
 
-from autogen import Agent, AssistantAgent, GroupChat, GroupChatManager, UserProxyAgent
+from autogen import Agent, AssistantAgent, GroupChat, GroupChatManager, UserProxyAgent, ConversableAgent
 from autogen.agentchat.contrib.retrieve_user_proxy_agent import RetrieveUserProxyAgent
+from db.neo4j_db import GraphRagCap
 
 config = {
   "config_list": [
@@ -31,11 +32,12 @@ task_master = AssistantAgent(
     name="Task_Master",
     system_message="""
     - your name is Task_Master, your job is to create an understandable, comprhensive, and spesific objective spesifically based on what user ask.
+    - If you don't know the context, don't start making an assumption, ask RAG_Agent for the context.
     - make sure to write your name on the first line using format 'From:<your name>'.
     - Once you are done, ask user for feedback and approval.
     - DONT ADD STEPS ON THE OUTPUT!!, just write the objective.
     - Before you start make an objective, make sure to search for context knowledge from RAG_Agent, if you already know the context knowledge or the RAG_Agent can't give you anyting, you can start make an output based on your analysis.
-    - To call RAG_Agent just type "RAG_Agent".
+    - When you want to call RAG_Agent type "Hello RAG_Agent" on the first line, and tell RAG_Agent for the context you needed on the second line.
     """,
     llm_config={
         "config_list": config["config_list"]
@@ -50,7 +52,7 @@ poa_agent_1 = AssistantAgent(
     - Your task is to make your own output, or improve the given output based on your analysis.
     - Make sure you rewrite the objective given from the previous agent on the first line of your output using format 'Objective:<objective>', and write your name on the second line using format 'From:<your name>'.
     - Before you start make your own analysis, make sure to search for context knowledge from RAG_Agent, if you already know the context knowledge or the RAG_Agent can't give you anyting, you can start make an output based on your analysis.
-    - To call RAG_Agent just type "RAG_Agent".
+    - When you want to call RAG_Agent type "Hello RAG_Agent" on the first line, and tell RAG_Agent for the context you needed on the second line.
     - After you got an output from PoA_Agent_2, if you think there is an improvement on the output by considering the objective, make an improvement on the output and ask PoA_Agent_2 for his opinion, otherwise type 'approve'.
     """,
     llm_config={
@@ -66,7 +68,7 @@ poa_agent_2 = AssistantAgent(
     - Your task is to make your own output, or improve the given output based on your analysis.
     - Make sure you rewrite the objective given from the previous agent on the first line of your output using format 'Objective:<objective>', and write your name on the second line using format 'From:<your name>'.
     - Before you start make your own analysis, make sure to search for context knowledge from RAG_Agent, if you already know the context knowledge, you can start make an output based on your analysis.
-    - To call RAG_Agent just type "RAG_Agent".
+    - When you want to call RAG_Agent type "Hello RAG_Agent" on the first line, and tell RAG_Agent for the context you needed on the second line.
     - After you got an output from PoA_Agent_1, if you think there is an improvement on the output by considering the objective, make an improvement on the output and ask PoA_Agent_1 for his opinion, otherwise type 'approve'
     """,
     llm_config={
@@ -100,6 +102,17 @@ ragproxyagent = RetrieveUserProxyAgent(
     code_execution_config=False,
 )
 
+graph_rag_agent = ConversableAgent(
+    name="RAG_Agent",
+    system_message="""
+    - your name is RAG_Agent, You are a context knowledge searcher.
+    - Your task is to search for the related asked context, and make an output of the information you have found.
+    """,
+    human_input_mode="NEVER",
+)
+
+GraphRagCap.add_to_agent(graph_rag_agent)
+
 def bsaa_speaker_selection_func(last_speaker: Agent, groupchat: GroupChat):
     """Define a customized speaker selection function.
     A recommended way is to define a transition for each speaker in the groupchat.
@@ -112,7 +125,7 @@ def bsaa_speaker_selection_func(last_speaker: Agent, groupchat: GroupChat):
 
     # We'll start with a transition to the planner
     if len(messages) <= 1:
-        return task_master
+        return graph_rag_agent
     
     elif last_speaker is user:
         if "approve" == messages[-1]["content"]:
@@ -120,7 +133,7 @@ def bsaa_speaker_selection_func(last_speaker: Agent, groupchat: GroupChat):
         else:
             return task_master
     
-    elif last_speaker is ragproxyagent:
+    elif last_speaker is graph_rag_agent:
          if "PoA_Agent_1" in messages[-2]["name"]:
             return poa_agent_1
          elif "PoA_Agent_2" in messages[-2]["name"]:
@@ -129,14 +142,14 @@ def bsaa_speaker_selection_func(last_speaker: Agent, groupchat: GroupChat):
             return task_master
 
     elif last_speaker is task_master:
-        if ragproxyagent.name == messages[-1]["content"]:
-            return ragproxyagent
+        if graph_rag_agent.name in messages[-1]["content"]:
+            return graph_rag_agent
         else:
             return user
 
     elif last_speaker is poa_agent_1:
-        if ragproxyagent.name == messages[-1]["content"]:
-            return ragproxyagent
+        if graph_rag_agent.name in messages[-1]["content"]:
+            return graph_rag_agent
         else:
             return poa_agent_2
 
@@ -145,8 +158,8 @@ def bsaa_speaker_selection_func(last_speaker: Agent, groupchat: GroupChat):
             return poa_agent_1
         elif "approve" == messages[-1]["content"]:
             return user
-        elif ragproxyagent.name == messages[-1]["content"]:
-            return ragproxyagent
+        elif graph_rag_agent.name in messages[-1]["content"]:
+            return graph_rag_agent
         else:
             return user
 
@@ -154,7 +167,7 @@ def bsaa_speaker_selection_func(last_speaker: Agent, groupchat: GroupChat):
         return "auto"
 
 poaGroup = GroupChat(
-    agents=[user ,ragproxyagent, task_master, poa_agent_1 ,poa_agent_2],
+    agents=[user ,graph_rag_agent, task_master, poa_agent_1 ,poa_agent_2],
     speaker_selection_method=bsaa_speaker_selection_func,
     messages=[],
     max_round=20,
