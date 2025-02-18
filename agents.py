@@ -17,7 +17,10 @@ config = {
 
 user = UserProxyAgent(
     name="user",
-    system_message="You are the users.",
+    system_message="""
+    - You are the users.
+    - make sure to write your name on the first line using format 'From:<your name>'.
+    """,
     human_input_mode="ALWAYS",
     code_execution_config={
         "use_docker": False,
@@ -26,7 +29,14 @@ user = UserProxyAgent(
 
 task_master = AssistantAgent(
     name="Task_Master",
-    system_message="your job is to create an understandable, comprhensive and detailed task",
+    system_message="""
+    - your name is Task_Master, your job is to create an understandable, comprhensive, and spesific objective spesifically based on what user ask.
+    - make sure to write your name on the first line using format 'From:<your name>'.
+    - Once you are done, ask user for feedback and approval.
+    - DONT ADD STEPS ON THE OUTPUT!!, just write the objective.
+    - Before you start make an objective, make sure to search for context knowledge from RAG_Agent, if you already know the context knowledge or the RAG_Agent can't give you anyting, you can start make an output based on your analysis.
+    - To call RAG_Agent just type "RAG_Agent".
+    """,
     llm_config={
         "config_list": config["config_list"]
     },
@@ -35,7 +45,14 @@ task_master = AssistantAgent(
 
 poa_agent_1 = AssistantAgent(
     name="PoA_Agent_1",
-    system_message="You are an expert in cybersecurity, your task is to analyze the PoA based on the given project requirements.",
+    system_message="""
+    - your name is PoA_Agent_1, You are an expert in cybersecurity.
+    - Your task is to make your own output, or improve the given output based on your analysis.
+    - Make sure you rewrite the objective given from the previous agent on the first line of your output using format 'Objective:<objective>', and write your name on the second line using format 'From:<your name>'.
+    - Before you start make your own analysis, make sure to search for context knowledge from RAG_Agent, if you already know the context knowledge or the RAG_Agent can't give you anyting, you can start make an output based on your analysis.
+    - To call RAG_Agent just type "RAG_Agent".
+    - After you got an output from PoA_Agent_2, if you think there is an improvement on the output by considering the objective, make an improvement on the output and ask PoA_Agent_2 for his opinion, otherwise type 'approve'.
+    """,
     llm_config={
         "config_list": config["config_list"]
     },
@@ -44,7 +61,14 @@ poa_agent_1 = AssistantAgent(
 
 poa_agent_2 = AssistantAgent(
     name="PoA_Agent_2",
-    system_message="You are an expert in cybersecurity, your task is to analyze the PoA based on the given project requirements.",
+    system_message="""
+    - your name is PoA_Agent_2, You are an expert in cybersecurity.
+    - Your task is to make your own output, or improve the given output based on your analysis.
+    - Make sure you rewrite the objective given from the previous agent on the first line of your output using format 'Objective:<objective>', and write your name on the second line using format 'From:<your name>'.
+    - Before you start make your own analysis, make sure to search for context knowledge from RAG_Agent, if you already know the context knowledge, you can start make an output based on your analysis.
+    - To call RAG_Agent just type "RAG_Agent".
+    - After you got an output from PoA_Agent_1, if you think there is an improvement on the output by considering the objective, make an improvement on the output and ask PoA_Agent_1 for his opinion, otherwise type 'approve'
+    """,
     llm_config={
         "config_list": config["config_list"]
     },
@@ -56,7 +80,7 @@ client = QdrantClient(url="https://c8edc979-935b-4327-951a-1590a78b6e4a.us-east4
 
 ragproxyagent = RetrieveUserProxyAgent(
     name='RAG_Agent',
-    human_input_mode="ALWAYS",
+    human_input_mode="NEVER",
     retrieve_config={
         "task": "default",
         "docs_path": [
@@ -65,7 +89,7 @@ ragproxyagent = RetrieveUserProxyAgent(
         ],  # change this to your own path, such as https://raw.githubusercontent.com/ag2ai/ag2/main/README.md
         # "chunk_token_size": 10000,
         "context_max_tokens": 10000,
-        "must_break_at_empty_line": False,
+        "must_break_at_empty_line": True,
         "model": config["config_list"][0]["model"],
         "db_config": {"client": client},
         "vector_db": "qdrant",  # qdrant database
@@ -83,6 +107,7 @@ def bsaa_speaker_selection_func(last_speaker: Agent, groupchat: GroupChat):
     Returns:
         Return an `Agent` class or a string from ['auto', 'manual', 'random', 'round_robin'] to select a default method to use.
     """
+
     messages = groupchat.messages
 
     # We'll start with a transition to the planner
@@ -90,22 +115,40 @@ def bsaa_speaker_selection_func(last_speaker: Agent, groupchat: GroupChat):
         return task_master
     
     elif last_speaker is user:
-        if "APPROVED" in messages[-2]["content"]:
+        if "approve" == messages[-1]["content"]:
             return poa_agent_1
         else:
             return task_master
     
-    # elif last_speaker is ragproxyagent:
-    #     return task_master
-    
+    elif last_speaker is ragproxyagent:
+         if "PoA_Agent_1" in messages[-2]["name"]:
+            return poa_agent_1
+         elif "PoA_Agent_2" in messages[-2]["name"]:
+            return poa_agent_2
+         else:
+            return task_master
+
     elif last_speaker is task_master:
-        return user
+        if ragproxyagent.name == messages[-1]["content"]:
+            return ragproxyagent
+        else:
+            return user
 
     elif last_speaker is poa_agent_1:
-        return poa_agent_2
+        if ragproxyagent.name == messages[-1]["content"]:
+            return ragproxyagent
+        else:
+            return poa_agent_2
 
     elif last_speaker is poa_agent_2:
-        return user
+        if poa_agent_1.name in messages[-1]["content"]:
+            return poa_agent_1
+        elif "approve" == messages[-1]["content"]:
+            return user
+        elif ragproxyagent.name == messages[-1]["content"]:
+            return ragproxyagent
+        else:
+            return user
 
     else:
         return "auto"

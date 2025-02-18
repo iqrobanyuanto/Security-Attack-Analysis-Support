@@ -1,7 +1,9 @@
 from agents import chatManager, ragproxyagent, poa_agent_1, task_master, user, poa_agent_2
 import dotenv
+from db.neo4j_db import query_engine
 
 def main():
+
     dotenv.load_dotenv()
     poa_agent_1.reset()
     chatManager.reset()
@@ -10,6 +12,7 @@ def main():
     user.reset()
     poa_agent_2.reset()
 
+    query_engine.connect_db()
     user_input = input("Please enter your question: ")
     inputPrompt = user_input
     # chat_results = ragproxyagent.initiate_chat(chatManager, message=ragproxyagent.message_generator, problem=inputPrompt)
